@@ -3,6 +3,7 @@ package com.sgdts.sgdts.beneficiary;
 import com.sgdts.sgdts.beneficiary.dto.BeneficiaryResponse;
 import com.sgdts.sgdts.beneficiary.dto.RegisterBeneficiaryRequest;
 import com.sgdts.sgdts.beneficiary.dto.UpdateBeneficiaryRequest;
+import com.sgdts.sgdts.common.BusinessException;
 import com.sgdts.sgdts.common.ConflictException;
 import com.sgdts.sgdts.common.NotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -23,17 +24,18 @@ public class BeneficiaryService {
     private final BeneficiaryRepository beneficiaryRepository;
 
     public BeneficiaryResponse register(RegisterBeneficiaryRequest request) {
-        if (beneficiaryRepository.findByEmail(request.getEmail()).isPresent()) {
-            throw new ConflictException("A beneficiary with email '" + request.getEmail() + "' already exists");
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        if (beneficiaryRepository.findByEmail(normalizedEmail).isPresent()) {
+            throw new ConflictException("A beneficiary with email '" + normalizedEmail + "' already exists");
         }
 
         Beneficiary beneficiary = Beneficiary.builder()
-                .fullName(request.getFullName())
-                .email(request.getEmail())
-                .phone(request.getPhone())
-                .address(request.getAddress())
-                .district(request.getDistrict())
-                .state(request.getState())
+                .fullName(request.getFullName().trim())
+                .email(normalizedEmail)
+                .phone(request.getPhone().trim())
+                .address(request.getAddress().trim())
+                .district(request.getDistrict().trim())
+                .state(request.getState().trim())
                 .dateOfBirth(request.getDateOfBirth())
                 .profileStatus(ProfileStatus.ACTIVE)
                 .build();
@@ -56,20 +58,24 @@ public class BeneficiaryService {
     public BeneficiaryResponse update(UUID id, UpdateBeneficiaryRequest request) {
         Beneficiary beneficiary = getBeneficiary(id);
 
+        if (beneficiary.getProfileStatus() != ProfileStatus.ACTIVE) {
+            throw new BusinessException("Cannot update profile for beneficiary with status: " + beneficiary.getProfileStatus());
+        }
+
         if (request.getFullName() != null && !request.getFullName().isBlank()) {
-            beneficiary.setFullName(request.getFullName());
+            beneficiary.setFullName(request.getFullName().trim());
         }
         if (request.getPhone() != null && !request.getPhone().isBlank()) {
-            beneficiary.setPhone(request.getPhone());
+            beneficiary.setPhone(request.getPhone().trim());
         }
         if (request.getAddress() != null && !request.getAddress().isBlank()) {
-            beneficiary.setAddress(request.getAddress());
+            beneficiary.setAddress(request.getAddress().trim());
         }
         if (request.getDistrict() != null && !request.getDistrict().isBlank()) {
-            beneficiary.setDistrict(request.getDistrict());
+            beneficiary.setDistrict(request.getDistrict().trim());
         }
         if (request.getState() != null && !request.getState().isBlank()) {
-            beneficiary.setState(request.getState());
+            beneficiary.setState(request.getState().trim());
         }
 
         Beneficiary saved = beneficiaryRepository.save(beneficiary);

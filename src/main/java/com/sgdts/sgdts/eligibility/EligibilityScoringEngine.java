@@ -1,6 +1,5 @@
 package com.sgdts.sgdts.eligibility;
 
-import com.sgdts.sgdts.common.BusinessException;
 import com.sgdts.sgdts.scheme.CriterionType;
 import com.sgdts.sgdts.scheme.EligibilityCriterion;
 import lombok.extern.slf4j.Slf4j;
@@ -61,7 +60,8 @@ public class EligibilityScoringEngine {
         BigDecimal maxPossibleScore = BigDecimal.ZERO;
 
         for (EligibilityCriterion criterion : criteria) {
-            maxPossibleScore = maxPossibleScore.add(criterion.getWeight());
+            BigDecimal weight = criterion.getWeight() != null ? criterion.getWeight() : BigDecimal.ZERO;
+            maxPossibleScore = maxPossibleScore.add(weight);
             String rawValue = input != null ? input.get(criterion.getCriterionId()) : null;
 
             CriterionResult result = evaluateCriterion(criterion, rawValue);
@@ -90,11 +90,11 @@ public class EligibilityScoringEngine {
 
     private CriterionResult evaluateCriterion(EligibilityCriterion criterion, String rawValue) {
         String id = criterion.getCriterionId();
-        BigDecimal weight = criterion.getWeight();
+        BigDecimal weight = criterion.getWeight() != null ? criterion.getWeight() : BigDecimal.ZERO;
         CriterionType type = criterion.getType();
         String expected = criterion.getExpectedValue();
 
-        // Missing input
+        // Missing or blank input
         if (rawValue == null || rawValue.isBlank()) {
             if (criterion.isMandatory()) {
                 return new CriterionResult(id, false, BigDecimal.ZERO, weight,
@@ -107,37 +107,60 @@ public class EligibilityScoringEngine {
 
         return switch (type) {
             case NUMERIC_MIN -> {
-                BigDecimal actual = parseBigDecimal(id, rawValue);
-                BigDecimal threshold = parseBigDecimal(id + ".expected", expected);
+                BigDecimal actual;
+                BigDecimal threshold;
+                try {
+                    actual = new BigDecimal(rawValue.trim());
+                    threshold = new BigDecimal(expected != null ? expected.trim() : "0");
+                } catch (NumberFormatException e) {
+                    yield new CriterionResult(id, false, BigDecimal.ZERO, weight,
+                            "Non-numeric value for field '" + id + "': " + rawValue);
+                }
                 boolean passed = actual.compareTo(threshold) >= 0;
                 yield new CriterionResult(id, passed, passed ? weight : BigDecimal.ZERO, weight,
                         passed ? "Value " + actual + " >= minimum " + threshold
                                : "Value " + actual + " is below minimum " + threshold);
             }
             case NUMERIC_MAX -> {
-                BigDecimal actual = parseBigDecimal(id, rawValue);
-                BigDecimal threshold = parseBigDecimal(id + ".expected", expected);
+                BigDecimal actual;
+                BigDecimal threshold;
+                try {
+                    actual = new BigDecimal(rawValue.trim());
+                    threshold = new BigDecimal(expected != null ? expected.trim() : "0");
+                } catch (NumberFormatException e) {
+                    yield new CriterionResult(id, false, BigDecimal.ZERO, weight,
+                            "Non-numeric value for field '" + id + "': " + rawValue);
+                }
                 boolean passed = actual.compareTo(threshold) <= 0;
                 yield new CriterionResult(id, passed, passed ? weight : BigDecimal.ZERO, weight,
                         passed ? "Value " + actual + " <= maximum " + threshold
                                : "Value " + actual + " exceeds maximum " + threshold);
             }
             case EQUALS -> {
-                boolean passed = rawValue.equalsIgnoreCase(expected);
+                boolean passed = rawValue.trim().equalsIgnoreCase(expected != null ? expected.trim() : "");
                 yield new CriterionResult(id, passed, passed ? weight : BigDecimal.ZERO, weight,
                         passed ? "Value matches expected: " + expected
                                : "Expected '" + expected + "' but got '" + rawValue + "'");
             }
+            case NOT_EQUALS -> {
+                boolean passed = !rawValue.trim().equalsIgnoreCase(expected != null ? expected.trim() : "");
+                yield new CriterionResult(id, passed, passed ? weight : BigDecimal.ZERO, weight,
+                        passed ? "Value differs from restricted value: " + expected
+                               : "Value equals restricted value: " + expected);
+            }
             case BOOLEAN -> {
-                boolean actualBool = Boolean.parseBoolean(rawValue);
-                boolean expectedBool = Boolean.parseBoolean(expected);
+                boolean actualBool = Boolean.parseBoolean(rawValue.trim());
+                boolean expectedBool = Boolean.parseBoolean(expected != null ? expected.trim() : "false");
                 boolean passed = actualBool == expectedBool;
                 yield new CriterionResult(id, passed, passed ? weight : BigDecimal.ZERO, weight,
                         passed ? "Boolean condition met"
                                : "Expected " + expectedBool + " but got " + actualBool);
             }
             case ENUM_MATCH -> {
-                // expected is a comma-separated list of accepted values
+                if (expected == null || expected.isBlank()) {
+                    yield new CriterionResult(id, false, BigDecimal.ZERO, weight,
+                            "No accepted enum values configured for criterion: " + id);
+                }
                 boolean passed = List.of(expected.split(","))
                         .stream()
                         .map(String::trim)
@@ -147,18 +170,9 @@ public class EligibilityScoringEngine {
                                : "Value '" + rawValue + "' not in accepted set: " + expected);
             }
             case REQUIRED -> {
-                // Simply checks value is non-blank (already confirmed above)
                 yield new CriterionResult(id, true, weight, weight, "Required field is present");
             }
         };
-    }
-
-    private BigDecimal parseBigDecimal(String field, String value) {
-        try {
-            return new BigDecimal(value.trim());
-        } catch (NumberFormatException e) {
-            throw new BusinessException("Non-numeric value for field '" + field + "': " + value);
-        }
     }
 
     private BigDecimal computeNormalizedScore(BigDecimal total, BigDecimal max) {

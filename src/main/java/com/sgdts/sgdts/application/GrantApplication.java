@@ -25,6 +25,9 @@ public class GrantApplication {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Version
+    private Long version;
+
     /** Human-readable unique reference, e.g. APP-1700000000000 */
     @Column(nullable = false, unique = true)
     private String referenceNumber;

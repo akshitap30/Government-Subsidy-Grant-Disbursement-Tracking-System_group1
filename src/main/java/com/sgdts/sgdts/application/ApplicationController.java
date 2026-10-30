@@ -37,6 +37,11 @@ public class ApplicationController {
         return ResponseEntity.ok(ApiResponse.success(applicationService.getApplication(id)));
     }
 
+    @GetMapping("/{id}/status")
+    public ResponseEntity<ApiResponse<ApplicationResponse>> getApplicationStatus(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success(applicationService.getApplicationStatus(id)));
+    }
+
     @GetMapping
     public ResponseEntity<ApiResponse<PagedResponse<ApplicationResponse>>> listApplications(
             @RequestParam(required = false) UUID beneficiaryId,

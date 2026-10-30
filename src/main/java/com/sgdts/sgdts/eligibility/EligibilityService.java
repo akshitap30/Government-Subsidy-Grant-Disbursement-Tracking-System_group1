@@ -12,6 +12,7 @@ import com.sgdts.sgdts.scheme.Scheme;
 import com.sgdts.sgdts.scheme.SchemeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +31,7 @@ public class EligibilityService {
     private final SchemeService schemeService;
     private final EligibilityScoringEngine scoringEngine;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Runs the eligibility scoring engine against the submitted application.
@@ -80,6 +82,9 @@ public class EligibilityService {
 
         log.info("Assessment complete: appId={} outcome={} score={}/{}",
                 applicationId, result.outcome(), result.totalScore(), result.maxPossibleScore());
+
+        eventPublisher.publishEvent(new EligibilityAssessedEvent(applicationId, result.outcome()));
+
         return saved;
     }
 

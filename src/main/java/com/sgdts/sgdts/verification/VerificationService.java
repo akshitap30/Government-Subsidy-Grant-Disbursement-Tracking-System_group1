@@ -11,6 +11,7 @@ import com.sgdts.sgdts.eligibility.EligibilityAssessmentRepository;
 import com.sgdts.sgdts.scheme.Scheme;
 import com.sgdts.sgdts.scheme.SchemeService;
 import com.sgdts.sgdts.verification.dto.RecordDecisionRequest;
+import com.sgdts.sgdts.verification.dto.TaskResponse;
 import com.sgdts.sgdts.verification.dto.WorkflowResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +30,7 @@ import java.util.UUID;
 @Transactional
 public class VerificationService {
 
-    /** Default task SLA: 3 working days (simplified to 72 hours). */
+    /** Default task SLA: 3 working days (72 hours). */
     private static final long TASK_DUE_HOURS = 72L;
 
     private final VerificationWorkflowRepository workflowRepository;
@@ -45,9 +46,8 @@ public class VerificationService {
      * application, the existing one is returned.
      */
     public WorkflowResponse createWorkflow(UUID applicationId) {
-        // Idempotency
         return workflowRepository.findByApplicationId(applicationId)
-                .map(wf -> buildResponse(wf))
+                .map(this::buildResponse)
                 .orElseGet(() -> doCreateWorkflow(applicationId));
     }
 
@@ -101,65 +101,94 @@ public class VerificationService {
     }
 
     @Transactional(readOnly = true)
-    public Page<com.sgdts.sgdts.verification.dto.TaskResponse> getPendingTasks(
-            String officerId, Pageable pageable) {
+    public Page<TaskResponse> getPendingTasks(String officerId, Pageable pageable) {
         return taskRepository.findByAssignedOfficerIdAndStatus(officerId, TaskStatus.PENDING, pageable)
-                .map(com.sgdts.sgdts.verification.dto.TaskResponse::from);
+                .map(TaskResponse::from);
     }
 
     /**
      * Records a verification decision on a task.
-     *
-     * <p>Authorization note: In production this method must verify that
-     * {@code actorId} is the assigned officer or has the required role.
-     * Currently it checks only that the task is in PENDING state and is
-     * not already decided — full RBAC integration is deferred until the
-     * security module is wired.
+     * Enforces valid task transitions, authorized officer checks, and separation-of-duties policy.
      */
-    public com.sgdts.sgdts.verification.dto.TaskResponse recordDecision(
-            UUID taskId, RecordDecisionRequest request) {
+    public TaskResponse recordDecision(UUID taskId, RecordDecisionRequest request) {
         VerificationTask task = findTask(taskId);
 
         if (task.isTerminal()) {
             throw new ConflictException("Task is already in a terminal state: " + task.getStatus());
         }
+
         if (task.getStatus() == TaskStatus.ESCALATED && request.getDecision() != Decision.APPROVE
                 && request.getDecision() != Decision.REJECT) {
-            // Allow approve/reject on escalated tasks; block other decisions
             throw new BusinessException("Escalated tasks can only be APPROVED or REJECTED");
+        }
+
+        VerificationWorkflow workflow = workflowRepository.findById(task.getWorkflowId())
+                .orElseThrow(() -> new NotFoundException("Workflow", task.getWorkflowId()));
+
+        String actor = request.getActorId() != null ? request.getActorId().trim() : null;
+
+        // Verify authorization against assigned officer if assigned
+        if (actor != null && !actor.isBlank()) {
+            if (task.getAssignedOfficerId() != null && !task.getAssignedOfficerId().equalsIgnoreCase(actor)) {
+                throw new BusinessException("Unauthorized decision: actor " + actor
+                        + " does not match assigned officer " + task.getAssignedOfficerId());
+            }
+
+            // Enforce separation of duties: cannot approve a subsequent stage if actor already approved an earlier stage
+            if (request.getDecision() == Decision.APPROVE) {
+                List<VerificationTask> allTasks = taskRepository.findByWorkflowIdOrderByCreatedAtAsc(workflow.getId());
+                boolean alreadyApprovedEarlier = allTasks.stream()
+                        .filter(t -> !t.getId().equals(taskId))
+                        .filter(t -> t.getDecision() == Decision.APPROVE)
+                        .anyMatch(t -> actor.equalsIgnoreCase(t.getAssignedOfficerId()));
+
+                if (alreadyApprovedEarlier) {
+                    throw new BusinessException("Separation of duties violation: officer " + actor
+                            + " already approved an earlier stage for this application");
+                }
+            }
+
+            if (task.getAssignedOfficerId() == null) {
+                task.setAssignedOfficerId(actor);
+                task.setAssignedAt(LocalDateTime.now());
+            }
         }
 
         task.setDecision(request.getDecision());
         task.setComments(request.getComments());
+
+        if (request.getDecision() == Decision.FLAG_FOR_REVIEW) {
+            task.setStatus(TaskStatus.ESCALATED);
+            if (task.getEscalationLevel() == EscalationLevel.NONE) {
+                task.setEscalationLevel(EscalationLevel.LEVEL_1);
+            }
+            task.getEscalationHistory().add("FLAG_FOR_REVIEW:" + LocalDateTime.now() + ":Flagged for review by " + actor);
+            taskRepository.save(task);
+            return TaskResponse.from(task);
+        }
+
         task.setCompletedAt(LocalDateTime.now());
         task.setStatus(TaskStatus.COMPLETED);
         taskRepository.save(task);
-
-        VerificationWorkflow workflow = workflowRepository.findById(task.getWorkflowId())
-                .orElseThrow(() -> new NotFoundException("Workflow", task.getWorkflowId()));
 
         switch (request.getDecision()) {
             case APPROVE -> handleApprove(workflow, task);
             case REJECT -> handleReject(workflow);
             case RETURN_FOR_CORRECTION -> handleReturn(workflow);
-            case FLAG_FOR_REVIEW -> {
-                task.setStatus(TaskStatus.ESCALATED);
-                taskRepository.save(task);
-            }
+            default -> {}
         }
 
-        return com.sgdts.sgdts.verification.dto.TaskResponse.from(task);
+        return TaskResponse.from(task);
     }
 
-    public com.sgdts.sgdts.verification.dto.TaskResponse reassignTask(
-            UUID taskId, String newOfficerId) {
+    public TaskResponse reassignTask(UUID taskId, String newOfficerId) {
         VerificationTask task = findTask(taskId);
         if (task.isTerminal()) {
             throw new BusinessException("Cannot reassign a task in terminal state: " + task.getStatus());
         }
-        task.setAssignedOfficerId(newOfficerId);
+        task.setAssignedOfficerId(newOfficerId != null ? newOfficerId.trim() : null);
         task.setAssignedAt(LocalDateTime.now());
-        return com.sgdts.sgdts.verification.dto.TaskResponse.from(taskRepository.save(task));
+        return TaskResponse.from(taskRepository.save(task));
     }
 
     // ── private helpers ──────────────────────────────────────────────────────
@@ -186,6 +215,7 @@ public class VerificationService {
     }
 
     private void handleReject(VerificationWorkflow workflow) {
+        cancelPendingTasks(workflow.getId());
         workflow.setStatus(TaskStatus.COMPLETED);
         workflow.setFinalDecision(Decision.REJECT);
         workflow.setCompletedAt(LocalDateTime.now());
@@ -196,6 +226,7 @@ public class VerificationService {
     }
 
     private void handleReturn(VerificationWorkflow workflow) {
+        cancelPendingTasks(workflow.getId());
         workflow.setStatus(TaskStatus.COMPLETED);
         workflow.setFinalDecision(Decision.RETURN_FOR_CORRECTION);
         workflow.setCompletedAt(LocalDateTime.now());
@@ -203,6 +234,16 @@ public class VerificationService {
         applicationService.updateVerificationState(
                 workflow.getApplicationId(), null, ApplicationStatus.RETURNED_FOR_CORRECTION);
         log.info("Workflow {} returned for correction", workflow.getId());
+    }
+
+    private void cancelPendingTasks(UUID workflowId) {
+        List<VerificationTask> tasks = taskRepository.findByWorkflowId(workflowId);
+        for (VerificationTask t : tasks) {
+            if (!t.isTerminal()) {
+                t.setStatus(TaskStatus.CANCELLED);
+                taskRepository.save(t);
+            }
+        }
     }
 
     private VerificationTask createTask(VerificationWorkflow workflow, String stageName) {

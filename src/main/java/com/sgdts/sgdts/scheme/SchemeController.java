@@ -2,10 +2,7 @@ package com.sgdts.sgdts.scheme;
 
 import com.sgdts.sgdts.common.ApiResponse;
 import com.sgdts.sgdts.common.PagedResponse;
-import com.sgdts.sgdts.scheme.dto.ActivateSchemeRequest;
-import com.sgdts.sgdts.scheme.dto.CreateSchemeRequest;
-import com.sgdts.sgdts.scheme.dto.SchemeResponse;
-import com.sgdts.sgdts.scheme.dto.UpdateSchemeRequest;
+import com.sgdts.sgdts.scheme.dto.*;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -16,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -53,6 +51,30 @@ public class SchemeController {
             @PathVariable UUID id,
             @Valid @RequestBody UpdateSchemeRequest request) {
         return ResponseEntity.ok(ApiResponse.success(schemeService.updateScheme(id, request)));
+    }
+
+    @GetMapping("/{id}/criteria")
+    public ResponseEntity<ApiResponse<List<CriterionDto>>> getCriteria(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success(schemeService.getCriteria(id)));
+    }
+
+    @PutMapping("/{id}/criteria")
+    public ResponseEntity<ApiResponse<SchemeResponse>> updateCriteria(
+            @PathVariable UUID id,
+            @RequestBody List<CriterionDto> criteria) {
+        return ResponseEntity.ok(ApiResponse.success("Scheme criteria updated", schemeService.updateCriteria(id, criteria)));
+    }
+
+    @GetMapping("/{id}/routing-rules")
+    public ResponseEntity<ApiResponse<List<RoutingRuleDto>>> getRoutingRules(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success(schemeService.getRoutingRules(id)));
+    }
+
+    @PutMapping("/{id}/routing-rules")
+    public ResponseEntity<ApiResponse<SchemeResponse>> updateRoutingRules(
+            @PathVariable UUID id,
+            @RequestBody List<RoutingRuleDto> rules) {
+        return ResponseEntity.ok(ApiResponse.success("Scheme routing rules updated", schemeService.updateRoutingRules(id, rules)));
     }
 
     @PostMapping("/{id}/activate")

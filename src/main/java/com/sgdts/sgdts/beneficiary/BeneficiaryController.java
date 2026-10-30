@@ -37,6 +37,12 @@ public class BeneficiaryController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
+    @GetMapping("/{id}/exists")
+    public ResponseEntity<ApiResponse<Boolean>> checkExists(@PathVariable UUID id) {
+        boolean exists = beneficiaryService.existsById(id);
+        return ResponseEntity.ok(ApiResponse.success(exists));
+    }
+
     @GetMapping
     public ResponseEntity<ApiResponse<PagedResponse<BeneficiaryResponse>>> listAll(
             @RequestParam(defaultValue = "0") int page,

@@ -22,6 +22,7 @@ public class RegisterBeneficiaryRequest {
     private String email;
 
     @NotBlank(message = "Phone is required")
+    @Pattern(regexp = "^[+0-9\\-\\s()]{7,20}$", message = "Phone must be valid")
     private String phone;
 
     @NotBlank(message = "Address is required")

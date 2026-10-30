@@ -20,6 +20,9 @@ public class VerificationWorkflow {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Version
+    private Long version;
+
     @Column(nullable = false)
     private UUID applicationId;
 

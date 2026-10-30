@@ -14,6 +14,7 @@ import com.sgdts.sgdts.scheme.Scheme;
 import com.sgdts.sgdts.scheme.SchemeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class ApplicationService {
     private final BeneficiaryService beneficiaryService;
     private final SchemeService schemeService;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** Valid terminal or in-progress statuses that block a new duplicate application. */
     private static final List<ApplicationStatus> ACTIVE_STATUSES = List.of(
@@ -74,6 +76,11 @@ public class ApplicationService {
     }
 
     @Transactional(readOnly = true)
+    public ApplicationResponse getApplicationStatus(UUID id) {
+        return ApplicationResponse.from(findApplication(id));
+    }
+
+    @Transactional(readOnly = true)
     public Page<ApplicationResponse> listApplications(UUID beneficiaryId, UUID schemeId,
                                                        ApplicationStatus status, Pageable pageable) {
         if (beneficiaryId != null) {
@@ -97,6 +104,9 @@ public class ApplicationService {
             throw new BusinessException("Only DRAFT applications can be updated. Current status: " + app.getStatus());
         }
         if (request.getRequestedAmount() != null) {
+            if (request.getRequestedAmount().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                throw new BusinessException("Requested amount must be positive");
+            }
             app.setRequestedAmount(request.getRequestedAmount());
         }
         if (request.getEligibilityData() != null) {
@@ -107,11 +117,20 @@ public class ApplicationService {
 
     public ApplicationResponse submitApplication(UUID id) {
         GrantApplication app = findApplication(id);
+
+        // Idempotency: repeated submission of an already submitted application returns current state
+        if (app.getStatus() == ApplicationStatus.SUBMITTED
+                || app.getStatus() == ApplicationStatus.ELIGIBILITY_REVIEW
+                || app.getStatus() == ApplicationStatus.UNDER_VERIFICATION) {
+            log.info("Application id={} is already submitted (status={}); returning existing record", id, app.getStatus());
+            return ApplicationResponse.from(app);
+        }
+
         if (app.getStatus() != ApplicationStatus.DRAFT) {
             throw new BusinessException("Only DRAFT applications can be submitted. Current status: " + app.getStatus());
         }
 
-        // Idempotency guard: block duplicate active applications
+        // Idempotency guard: block duplicate active applications for this beneficiary and scheme
         if (applicationRepository.existsByBeneficiaryIdAndSchemeIdAndStatusIn(
                 app.getBeneficiaryId(), app.getSchemeId(), ACTIVE_STATUSES)) {
             throw new ConflictException(
@@ -136,7 +155,11 @@ public class ApplicationService {
 
         GrantApplication saved = applicationRepository.save(app);
         log.info("Submitted application id={} ref={}", saved.getId(), saved.getReferenceNumber());
-        return ApplicationResponse.from(saved);
+
+        // Publish domain event for automated assessment and workflow routing
+        eventPublisher.publishEvent(new ApplicationSubmittedEvent(saved.getId()));
+
+        return ApplicationResponse.from(findApplication(saved.getId()));
     }
 
     public ApplicationResponse cancelApplication(UUID id) {
