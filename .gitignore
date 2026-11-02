@@ -14,7 +14,6 @@ target/
 .sts4-cache
 
 ### IntelliJ IDEA ###
-# Ignore machine-specific and personal IDE files
 .idea/workspace.xml
 .idea/tasks.xml
 .idea/usage.statistics.xml
@@ -27,7 +26,6 @@ target/
 .idea/sqlDataSources.xml
 .idea/dynamic.xml
 .idea/uiDesigner.xml
-# Keep: .idea/misc.xml (Maven project config, language level), .idea/.gitignore, .idea/compiler.xml
 *.iws
 *.iml
 *.ipr
@@ -53,3 +51,10 @@ application-local.yml
 application-secret*.properties
 application-secret*.yml
 
+### Frontend Node / Vite ###
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
