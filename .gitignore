@@ -14,18 +14,7 @@ target/
 .sts4-cache
 
 ### IntelliJ IDEA ###
-.idea/workspace.xml
-.idea/tasks.xml
-.idea/usage.statistics.xml
-.idea/dictionaries
-.idea/shelf
-.idea/aws.xml
-.idea/httpRequests
-.idea/dataSources/
-.idea/dataSources.local.xml
-.idea/sqlDataSources.xml
-.idea/dynamic.xml
-.idea/uiDesigner.xml
+.idea/
 *.iws
 *.iml
 *.ipr

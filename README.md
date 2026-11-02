@@ -2,6 +2,9 @@
 
 An enterprise-grade, full-stack digital government platform for administering national subsidy schemes, automating citizen eligibility scoring, orchestrating multi-stage verification workflows, and tracking Direct Benefit Transfer (DBT) grant disbursements.
 
+> [!NOTE]
+> 📄 **Mentor Presentation & Evaluation Guide**: A comprehensive, publication-quality presentation guide and viva Q&A document is available at [`SGDTS_Project_Presentation_Guide.pdf`](SGDTS_Project_Presentation_Guide.pdf).
+
 ---
 
 ## 🏛️ System Overview
@@ -183,3 +186,4 @@ npm run build
 
 ## 📄 License
 This project is developed under the Government Direct Benefit Transfer and Welfare Administration framework.
+
