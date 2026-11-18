@@ -178,3 +178,72 @@ VALUES
 ('b1111111-0002-4000-8000-000000000002', 'Sunita Devi Yadav', 'sunita.yadav@example.com', '+91 9812345678', 'H.No 12, Ward 4, Shiv Nagar', 'Jaipur', 'Rajasthan', '1992-11-22', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
+
+
+
+-- 9. Officer determinations on verification tasks
+CREATE TABLE IF NOT EXISTS verification_decisions (
+                                                      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id      UUID NOT NULL REFERENCES verification_tasks(id) ON DELETE CASCADE,
+    decision     VARCHAR(10) NOT NULL CHECK (decision IN ('APPROVE','REJECT','RETURN','FLAG')),
+    remarks      TEXT,
+    decided_by   VARCHAR(100) NOT NULL,
+    decided_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    version      BIGINT NOT NULL DEFAULT 0
+    );
+
+-- 10. Actual DBT payments for each disbursement stage
+CREATE TABLE IF NOT EXISTS disbursement_transactions (
+                                                         id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stage_id         UUID NOT NULL REFERENCES disbursement_stages(id) ON DELETE CASCADE,
+    application_id   UUID NOT NULL REFERENCES grant_application(id),
+    beneficiary_id   UUID NOT NULL REFERENCES beneficiaries(id),
+    amount           NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    transaction_ref  VARCHAR(60) UNIQUE,
+    payment_mode     VARCHAR(20) NOT NULL DEFAULT 'DBT',
+    status           VARCHAR(20) NOT NULL DEFAULT 'INITIATED'
+    CHECK (status IN ('INITIATED','PROCESSING','SUCCESS','FAILED','REVERSED')),
+    failure_reason   VARCHAR(255),
+    initiated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    completed_at     TIMESTAMP,
+    created_by       VARCHAR(100),
+    created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+    version          BIGINT NOT NULL DEFAULT 0
+    );
+
+-- 11. PFMS reconciliation of each transaction
+CREATE TABLE IF NOT EXISTS pfms_reconciliations (
+                                                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transaction_id  UUID NOT NULL REFERENCES disbursement_transactions(id) ON DELETE CASCADE,
+    pfms_reference  VARCHAR(60),
+    pfms_status     VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+    CHECK (pfms_status IN ('PENDING','MATCHED','MISMATCH','FAILED')),
+    reconciled_at   TIMESTAMP,
+    remarks         TEXT,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    version         BIGINT NOT NULL DEFAULT 0
+    );
+
+-- 12. Global audit trail
+CREATE TABLE IF NOT EXISTS audit_logs (
+                                          id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor        VARCHAR(100),
+    actor_role   VARCHAR(20),
+    action       VARCHAR(60) NOT NULL,
+    entity_type  VARCHAR(40),
+    entity_id    UUID,
+    details      TEXT,
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_vdec_task      ON verification_decisions(task_id);
+CREATE INDEX IF NOT EXISTS idx_dtx_stage      ON disbursement_transactions(stage_id);
+CREATE INDEX IF NOT EXISTS idx_dtx_app        ON disbursement_transactions(application_id);
+CREATE INDEX IF NOT EXISTS idx_pfms_tx        ON pfms_reconciliations(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_audit_entity   ON audit_logs(entity_type, entity_id);
+
+
+
