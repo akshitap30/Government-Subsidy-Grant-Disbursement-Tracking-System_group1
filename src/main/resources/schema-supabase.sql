@@ -193,7 +193,42 @@ CREATE TABLE IF NOT EXISTS verification_decisions (
     version      BIGINT NOT NULL DEFAULT 0
     );
 
--- 10. Actual DBT payments for each disbursement stage
+-- 9a. Staged disbursement plans and tranches used by the SGDTS internal workflow
+CREATE TABLE IF NOT EXISTS disbursement_plans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), version BIGINT NOT NULL DEFAULT 0,
+    application_id UUID NOT NULL REFERENCES grant_application(id),
+    total_sanctioned_amount NUMERIC(19,2) NOT NULL CHECK (total_sanctioned_amount > 0),
+    plan_status VARCHAR(30) NOT NULL DEFAULT 'DRAFT', notes TEXT, created_by VARCHAR(255), updated_by VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS disbursement_stages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), version BIGINT NOT NULL DEFAULT 0,
+    plan_id UUID NOT NULL REFERENCES disbursement_plans(id), stage_number INT NOT NULL CHECK (stage_number > 0),
+    stage_name VARCHAR(255) NOT NULL, amount NUMERIC(19,2) NOT NULL CHECK (amount > 0), scheduled_date DATE,
+    release_condition TEXT, status VARCHAR(30) NOT NULL DEFAULT 'SCHEDULED', released_at TIMESTAMP,
+    notes TEXT, created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_disbursement_stage_number UNIQUE(plan_id, stage_number)
+);
+
+-- Internal simulated payment batches. These records never represent real PFMS transactions.
+CREATE TABLE IF NOT EXISTS payment_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), version BIGINT NOT NULL DEFAULT 0,
+    batch_reference VARCHAR(255) NOT NULL UNIQUE, status VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+    total_amount NUMERIC(19,2) NOT NULL CHECK (total_amount > 0),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(), processed_at TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS payment_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), version BIGINT NOT NULL DEFAULT 0,
+    batch_id UUID NOT NULL REFERENCES payment_batches(id), stage_id UUID NOT NULL UNIQUE REFERENCES disbursement_stages(id),
+    application_id UUID NOT NULL REFERENCES grant_application(id), beneficiary_id UUID NOT NULL REFERENCES beneficiaries(id),
+    amount NUMERIC(19,2) NOT NULL CHECK (amount > 0), status VARCHAR(30) NOT NULL DEFAULT 'QUEUED',
+    attempt_count INT NOT NULL DEFAULT 0, transaction_reference VARCHAR(255), gateway_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(), processed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_payment_jobs_batch ON payment_jobs(batch_id);
+CREATE INDEX IF NOT EXISTS idx_payment_jobs_application ON payment_jobs(application_id);
+
+-- 10. Actual DBT payments for each disbursement stage (legacy reconciliation records)
 CREATE TABLE IF NOT EXISTS disbursement_transactions (
                                                          id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     stage_id         UUID NOT NULL REFERENCES disbursement_stages(id) ON DELETE CASCADE,

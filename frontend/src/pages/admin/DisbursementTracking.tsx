@@ -1,258 +1,122 @@
-import React, { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import React, { useMemo, useState } from 'react'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, ArrowRight, BadgeCheck, Check, CheckCircle2, CircleDollarSign, ClipboardCheck, Clock3, FileCheck2, Landmark, Loader2, Plus, RefreshCw, Send, ShieldCheck } from 'lucide-react'
 import { applicationsApi } from '@/api/applications'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
+import { paymentBatchesApi, type PaymentBatch, type Plan, type Stage } from '@/api/paymentBatches'
 import { Button } from '@/components/ui/Button'
-import { StatusBadge } from '@/components/common/StatusBadge'
-import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
+import { formatCurrency, formatDateTime } from '@/lib/utils'
+import { useToast } from '@/components/ui/Toast'
 import { Modal } from '@/components/ui/Modal'
-import { formatCurrency, formatDate } from '@/lib/utils'
-import {
-  CreditCard,
-  AlertCircle,
-  FileCode2,
-  CheckCircle2,
-  Clock,
-  ArrowUpRight,
-  Landmark,
-  ShieldAlert,
-  Send,
-} from 'lucide-react'
+
+const demoMode = () => localStorage.getItem('sgdts_demo_data_mode') !== 'false'
 
 export const DisbursementTracking: React.FC = () => {
-  const [isContractModalOpen, setIsContractModalOpen] = useState(false)
+  const client = useQueryClient()
+  const toast = useToast()
+  const [selectedStages, setSelectedStages] = useState<string[]>([])
+  const [stageInputs, setStageInputs] = useState<Record<string, {name: string; amount: string; date: string}>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const [demoBatchStatus, setDemoBatchStatus] = useState<'READY'|'DRAFT'|'VALIDATED'|'PROCESSING'|'COMPLETED'>('READY')
+  const [demoReference, setDemoReference] = useState('')
+  const [demoDialog, setDemoDialog] = useState<'review'|'validated'|'processing'|'receipt'|null>(null)
+  const [demoProgress, setDemoProgress] = useState(0)
+  const demo = demoMode()
+  const appsQuery = useQuery({ queryKey: ['disbursement-approved-apps'], queryFn: () => applicationsApi.listApplications({ status: 'APPROVED', page: 0, size: 100 }), enabled: !demo })
+  const apps = appsQuery.data?.content ?? []
+  const planQueries = useQueries({ queries: apps.map(app => ({
+    queryKey: ['disbursement-plan', app.id], queryFn: () => paymentBatchesApi.getPlan(app.id), retry: false,
+  })) })
+  const batchesQuery = useQuery({ queryKey: ['payment-batches'], queryFn: paymentBatchesApi.list, enabled: !demo })
+  const plans = useMemo(() => apps.map((app, i) => ({ app, plan: planQueries[i]?.data as Plan | undefined })), [apps, planQueries.map(q=>q.data?.id).join(',')])
+  const batches = batchesQuery.data ?? []
+  const readyStages = plans.flatMap(({plan}) => plan?.stages ?? []).filter(s => s.status === 'READY')
+  const totals = { sanctioned: plans.reduce((v, x) => v + Number(x.plan?.totalSanctionedAmount ?? 0), 0), disbursed: batches.reduce((v,b)=>v+b.payments.filter(p=>p.status==='SUCCESS').reduce((s,p)=>s+Number(p.amount),0),0) }
 
-  // Fetch approved applications from live backend
-  const { data: approvedAppsData, isLoading } = useQuery({
-    queryKey: ['disbursement-approved-apps'],
-    queryFn: () => applicationsApi.listApplications({ status: 'APPROVED', page: 0, size: 50 }),
-  })
+  const refresh = async () => { await client.invalidateQueries({ queryKey: ['disbursement-approved-apps'] }); await client.invalidateQueries({ queryKey: ['disbursement-plan'] }); await client.invalidateQueries({ queryKey: ['payment-batches'] }) }
+  const perform = async (key: string, action: () => Promise<unknown>, success: string) => {
+    setBusy(key)
+    try { await action(); toast.success(success); await refresh() }
+    catch (e) { toast.error(e instanceof Error ? e.message : 'The operation could not be completed') }
+    finally { setBusy(null) }
+  }
 
-  const approvedApps = approvedAppsData?.content || []
-  const totalApprovedAmount = approvedApps.reduce(
-    (acc, app) => acc + (Number(app.requestedAmount) || 0),
-    0
-  )
+  const createDemoBatch = () => {
+    setDemoReference(`SIM-PFMS-2026-${Date.now().toString().slice(-6)}`)
+    setDemoBatchStatus('DRAFT')
+    setDemoDialog('review')
+  }
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Direct Benefit Transfer (DBT) Disbursement Tracking
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            PFMS / NPCI Aadhaar Payment Bridge System (APBS) mandate generation and banking tranche reconciliation.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          leftIcon={<FileCode2 className="h-4 w-4 text-blue-600" />}
-          onClick={() => setIsContractModalOpen(true)}
-        >
-          View Missing Backend API Requirement
-        </Button>
-      </div>
+  const processDemoBatch = async () => {
+    setDemoBatchStatus('PROCESSING')
+    setDemoDialog('processing')
+    setDemoProgress(0)
+    for (const progress of [24, 51, 77, 100]) {
+      await new Promise(resolve => window.setTimeout(resolve, 650))
+      setDemoProgress(progress)
+    }
+    setDemoBatchStatus('COMPLETED')
+    setDemoDialog('receipt')
+  }
 
-      {/* Prominent Architectural Gap Notice as required by prompt */}
-      <div className="p-4 bg-blue-50/80 border border-blue-200 rounded-xl space-y-2 text-xs text-blue-950">
-        <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-blue-900">
-          <AlertCircle className="h-4 w-4 text-blue-600 shrink-0" />
-          Backend Integration Notice — Pending Disbursement Microservice
-        </div>
-        <p className="leading-relaxed">
-          The existing Spring Boot service contains modules for <code>/api/v1/schemes</code>, <code>/api/v1/beneficiaries</code>, <code>/api/v1/applications</code>, <code>/api/v1/verification</code>, and <code>/api/v1/eligibility</code>. The dedicated payment gateway disbursement execution endpoint (e.g. <code>POST /api/v1/disbursements/batch</code>) is documented as an upcoming backend requirement. All data below is populated from live sanctioned applications in status <strong>APPROVED</strong>.
-        </p>
-      </div>
-
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Sanctioned for Disbursement
-              </p>
-              <div className="text-2xl font-bold text-slate-900 mt-1">
-                {formatCurrency(totalApprovedAmount)}
-              </div>
-              <p className="text-xs text-emerald-600 font-medium mt-1">
-                {approvedApps.length} Sanctioned claims ready
-              </p>
-            </div>
-            <div className="h-12 w-12 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-              <CreditCard className="h-6 w-6" />
-            </div>
+  return <div className="space-y-6">
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-blue-700">Finance operations</p><h1 className="mt-1 text-2xl font-bold text-slate-900">Disbursement & payment batches</h1><p className="mt-1 text-sm text-slate-600">Manage approved grants, compliance gated stages, and simulated payment processing.</p></div>
+      {!demo && <Button variant="outline" size="sm" onClick={()=>refresh()} leftIcon={<RefreshCw className="h-4 w-4"/>}>Refresh</Button>}
+    </header>
+    <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0"/><div><strong>SIMULATION MODE — MOCK PAYMENT GATEWAY</strong><p className="mt-1">Successful jobs receive a SIM reference. No PFMS connection or real money transfer is performed.</p></div></div>
+    {demo ? <>
+      <div className="grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">
+        <Card className="overflow-hidden"><div className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 p-6 text-white sm:p-8"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-300">Treasury operations · Demo</p><h2 className="mt-2 text-2xl font-bold">Payment command center</h2><p className="mt-1 max-w-lg text-sm text-slate-300">Review a grant tranche, validate its controls, then watch the simulated payment move through the processing rail.</p></div><div className="hidden h-14 w-14 items-center justify-center rounded-2xl border border-white/15 bg-white/10 sm:flex"><Landmark className="h-7 w-7 text-cyan-300"/></div></div><div className="mt-7 grid gap-3 sm:grid-cols-3"><DemoValue label="Beneficiary" value="Ramesh Kumar Verma"/><DemoValue label="Application" value="APP-DEMO-001 · Approved"/><DemoValue label="Release tranche" value="₹20,000 · Stage 1"/></div></div>
+          <CardContent className="p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Current batch</p><p className="mt-1 font-mono text-sm font-bold text-slate-900">{demoReference || 'Not created yet'}</p></div><DemoStatus status={demoBatchStatus}/></div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-4"><DemoMilestone label="Batch created" complete={demoBatchStatus!=='READY'}/><DemoMilestone label="Controls checked" complete={['VALIDATED','PROCESSING','COMPLETED'].includes(demoBatchStatus)}/><DemoMilestone label="Gateway response" complete={demoBatchStatus==='COMPLETED'}/><DemoMilestone label="Receipt issued" complete={demoBatchStatus==='COMPLETED'}/></div>
+            <div className="mt-6 flex flex-wrap items-center gap-3">{demoBatchStatus==='READY'&&<Button size="md" onClick={createDemoBatch} leftIcon={<Plus className="h-4 w-4"/>}>Create demo batch</Button>}{demoBatchStatus==='DRAFT'&&<Button size="md" onClick={()=>setDemoDialog('review')} leftIcon={<FileCheck2 className="h-4 w-4"/>}>Review batch details</Button>}{demoBatchStatus==='VALIDATED'&&<Button size="md" onClick={()=>setDemoDialog('validated')} leftIcon={<ArrowRight className="h-4 w-4"/>}>Open processing workspace</Button>}{demoBatchStatus==='COMPLETED'&&<><Button size="md" onClick={()=>setDemoDialog('receipt')} leftIcon={<FileCheck2 className="h-4 w-4"/>}>View transaction receipt</Button><Button size="md" variant="outline" onClick={()=>{setDemoBatchStatus('READY');setDemoReference('');setDemoProgress(0)}}>Start another demo</Button></>}</div>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Payment Channel
-              </p>
-              <div className="text-base font-bold text-slate-900 mt-1">
-                PFMS / NPCI APBS
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Aadhaar Payment Bridge</p>
-            </div>
-            <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
-              <Landmark className="h-6 w-6" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Reconciliation SLA
-              </p>
-              <div className="text-base font-bold text-slate-900 mt-1">
-                T+2 Banking Days
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Automated credit response</p>
-            </div>
-            <div className="h-12 w-12 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
-              <Clock className="h-6 w-6" />
-            </div>
-          </CardContent>
-        </Card>
+        <Card><CardHeader><CardTitle>Control checklist</CardTitle><CardDescription>Pre-release checks shown in this demonstration.</CardDescription></CardHeader><CardContent className="space-y-4">{[['Application approved','Approval recorded'],['Disbursement plan','Active plan · 3 tranches'],['Compliance gate','Mandatory items verified'],['Duplicate check','No prior payment job']].map(([title,desc])=><div className="flex gap-3" key={title}><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check className="h-4 w-4"/></span><div><p className="text-sm font-semibold text-slate-800">{title}</p><p className="text-xs text-slate-500">{desc}</p></div></div>)}<div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs leading-relaxed text-blue-900">The live Backend Mode runs these checks against application, stage, and compliance records before payment processing.</div></CardContent></Card>
       </div>
-
-      {/* Approved Claims Table */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle>Sanctioned Claims Awaiting Disbursement Tranche</CardTitle>
-            <CardDescription>
-              Applications that have successfully completed multi-stage verification and are ready for fund release.
-            </CardDescription>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={approvedApps.length === 0}
-            leftIcon={<Send className="h-3.5 w-3.5" />}
-            onClick={() => setIsContractModalOpen(true)}
-          >
-            Generate PFMS Batch Mandate
-          </Button>
-        </CardHeader>
-
-        <CardContent className="p-0">
-          {isLoading ? (
-            <LoadingSpinner text="Querying sanctioned grant claims..." />
-          ) : approvedApps.length === 0 ? (
-            <div className="p-8 text-center space-y-2">
-              <CreditCard className="h-8 w-8 text-slate-300 mx-auto" />
-              <p className="text-sm font-semibold text-slate-700">No Approved Grants Ready for Disbursement</p>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Applications will appear here once officers record final approval decisions in the verification queue.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-600">
-                <thead className="bg-slate-50 border-y border-slate-200 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-6 py-3.5">Sanction Order / Ref</th>
-                    <th className="px-6 py-3.5">Scheme ID</th>
-                    <th className="px-6 py-3.5">Beneficiary UUID</th>
-                    <th className="px-6 py-3.5">Sanctioned Amount</th>
-                    <th className="px-6 py-3.5">Verification Outcome</th>
-                    <th className="px-6 py-3.5">Approval Date</th>
-                    <th className="px-6 py-3.5 text-right">Disbursement Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {approvedApps.map((app) => (
-                    <tr key={app.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="px-6 py-4 font-mono font-semibold text-blue-600">
-                        {app.referenceNumber}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-xs text-slate-500">
-                        {app.schemeId.substring(0, 8)}...
-                      </td>
-                      <td className="px-6 py-4 font-mono text-xs text-slate-500">
-                        {app.beneficiaryId.substring(0, 8)}...
-                      </td>
-                      <td className="px-6 py-4 font-bold text-slate-900">
-                        {formatCurrency(app.requestedAmount)}
-                      </td>
-                      <td className="px-6 py-4">
-                        <StatusBadge status={app.status} />
-                      </td>
-                      <td className="px-6 py-4 text-xs text-slate-500">
-                        {formatDate(app.updatedAt)}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-                          <Clock className="h-3 w-3" /> Ready for PFMS Batch
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Backend API Documentation Modal */}
-      <Modal
-        isOpen={isContractModalOpen}
-        onClose={() => setIsContractModalOpen(false)}
-        title="Documented Missing Backend Requirement: Disbursement API"
-        description="Comprehensive technical specification for the Spring Boot Disbursement controller and database entities."
-        maxWidth="2xl"
-      >
-        <div className="space-y-4 text-xs text-slate-700 font-sans leading-relaxed">
-          <div className="p-3 bg-slate-100 rounded-lg font-mono text-[11px] space-y-1">
-            <p className="font-bold text-slate-900">Target Endpoints to Implement in Spring Boot:</p>
-            <p className="text-blue-700">POST /api/v1/disbursements/batches</p>
-            <p className="text-blue-700">GET /api/v1/disbursements/batches/&#123;batchId&#125;</p>
-            <p className="text-blue-700">POST /api/v1/disbursements/batches/&#123;batchId&#125;/reconcile</p>
-            <p className="text-blue-700">GET /api/v1/applications/&#123;id&#125;/disbursement</p>
-          </div>
-
-          <div>
-            <h4 className="font-bold text-slate-900 mb-1">Recommended Database Entity (DisbursementRecord):</h4>
-            <pre className="p-3 bg-slate-900 text-slate-200 rounded-lg overflow-x-auto text-[11px] font-mono">
-{`@Entity
-@Table(name = "disbursement_records")
-public class DisbursementRecord {
-    @Id @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-    private UUID applicationId;
-    private UUID beneficiaryId;
-    private BigDecimal amount;
-    @Enumerated(EnumType.STRING)
-    private DisbursementStatus status; // PENDING, PROCESSING, COMPLETED, FAILED
-    private String utrNumber; // Bank Unique Transaction Reference
-    private String paymentBatchId;
-    private LocalDateTime disbursedAt;
-    private LocalDateTime reconciledAt;
-}`}
-            </pre>
-          </div>
-
-          <p className="text-slate-500">
-            Until this backend service is compiled into the Java backend, the frontend UI accurately surfaces all approved applications awaiting disbursement, maintaining complete documentation integrity.
-          </p>
-
-          <div className="flex justify-end pt-2 border-t border-slate-100">
-            <Button variant="outline" size="sm" onClick={() => setIsContractModalOpen(false)}>
-              Close Documentation
-            </Button>
-          </div>
-        </div>
+      <Card><CardHeader><CardTitle>Recent demo activity</CardTitle><CardDescription>Session events for the sample disbursement.</CardDescription></CardHeader><CardContent><div className="grid gap-3 sm:grid-cols-3"><ActivityItem icon={<Clock3/>} title="Stage scheduled" detail="Tranche 1 · ₹20,000"/><ActivityItem icon={<ShieldCheck/>} title="Compliance cleared" detail="All mandatory checks verified"/><ActivityItem icon={<CircleDollarSign/>} title={demoBatchStatus==='COMPLETED'?'Payment simulated':'Awaiting batch'} detail={demoBatchStatus==='COMPLETED'?'Mock gateway returned SUCCESS':'Create a batch to continue'}/></div></CardContent></Card>
+      <Modal isOpen={demoDialog!==null} onClose={()=>demoDialog==='processing'?undefined:setDemoDialog(null)} maxWidth="4xl" title={<span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><Landmark className="h-4 w-4"/></span>Payment batch workspace</span>} description="Treasury batch · Guided simulation · No external payment system is contacted">
+        {demoDialog==='review'&&<div className="space-y-5"><WorkspaceSteps current={1}/><div className="rounded-xl bg-gradient-to-r from-slate-950 to-blue-950 p-5 text-white"><p className="text-xs font-semibold uppercase tracking-widest text-cyan-300">Batch review</p><div className="mt-3 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-slate-300">Payment batch reference</p><p className="mt-1 font-mono text-lg font-bold">{demoReference}</p></div><div className="text-right"><p className="text-xs uppercase tracking-wider text-slate-300">Batch total</p><p className="text-3xl font-bold">₹20,000</p></div></div></div><div className="grid gap-4 md:grid-cols-2"><ReviewTile label="Beneficiary" value="Ramesh Kumar Verma" sub="Verified beneficiary profile"/><ReviewTile label="Grant application" value="APP-DEMO-001" sub="Approved · Solar rooftop assistance"/><ReviewTile label="Release stage" value="Stage 1 of 3 · Installation milestone" sub="Compliance gate: cleared"/><ReviewTile label="Payment rail" value="Mock DBT Gateway" sub="Simulated transaction · No bank transfer"/></div><div className="rounded-lg border border-slate-200 p-4"><p className="text-sm font-semibold text-slate-900">Before processing</p><p className="mt-1 text-xs leading-relaxed text-slate-600">The batch will be checked for approval, stage readiness, compliance, amount validity, and duplicate payment protection. You can review the result before starting the simulation.</p></div><div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setDemoDialog(null)}>Close</Button><Button onClick={()=>{setDemoBatchStatus('VALIDATED');setDemoDialog('validated')}} leftIcon={<ClipboardCheck className="h-4 w-4"/>}>Validate batch</Button></div></div>}
+        {demoDialog==='validated'&&<div className="space-y-5"><WorkspaceSteps current={2}/><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5"><div className="flex gap-3"><BadgeCheck className="h-6 w-6 shrink-0 text-emerald-700"/><div><h3 className="font-bold text-emerald-950">All batch controls passed</h3><p className="mt-1 text-sm text-emerald-800">1 payment job validated · ₹20,000 total · no duplicate stage found</p></div></div></div><div className="grid gap-3 sm:grid-cols-3"><ReviewTile label="Jobs ready" value="1 payment" sub="Queued for processing"/><ReviewTile label="Amount" value="₹20,000" sub="Simulated grant release"/><ReviewTile label="Gateway" value="Mock DBT Gateway" sub="Sandbox behavior only"/></div><div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setDemoDialog('review')}>Back to review</Button><Button onClick={processDemoBatch} leftIcon={<Send className="h-4 w-4"/>}>Start simulated processing</Button></div></div>}
+        {demoDialog==='processing'&&<div className="mx-auto max-w-xl space-y-6 py-4"><WorkspaceSteps current={3}/><div className="text-center"><span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 text-blue-700"><Loader2 className="h-8 w-8 animate-spin"/></span><h3 className="mt-4 text-xl font-bold text-slate-900">Processing simulated payment</h3><p className="mt-1 text-sm text-slate-500">The mock gateway is returning a sandbox response.</p></div><div><div className="mb-2 flex justify-between text-xs font-semibold text-slate-600"><span>Payment job progress</span><span>{demoProgress}%</span></div><div className="h-2.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-500" style={{width:`${demoProgress}%`}}/></div></div><div className="space-y-3">{['Batch accepted by mock gateway','Beneficiary and amount verified','Simulated transaction reference issued'].map((step,i)=><div key={step} className="flex items-center gap-3 text-sm"><span className={`flex h-6 w-6 items-center justify-center rounded-full ${demoProgress >= [24,51,77][i]?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-400'}`}>{demoProgress >= [24,51,77][i]?<Check className="h-4 w-4"/>:<span className="h-1.5 w-1.5 rounded-full bg-current"/>}</span><span className={demoProgress >= [24,51,77][i]?'text-slate-800':'text-slate-400'}>{step}</span></div>)}</div><p className="text-center text-[11px] font-medium uppercase tracking-wider text-slate-400">Demonstration only · no real payment is being made</p></div>}
+        {demoDialog==='receipt'&&<div className="space-y-5"><WorkspaceSteps current={4}/><div className="overflow-hidden rounded-xl border border-emerald-200"><div className="bg-emerald-700 px-5 py-5 text-white"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15"><CheckCircle2 className="h-7 w-7"/></span><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-100">Mock gateway response</p><h3 className="text-xl font-bold">Simulated payment successful</h3></div></div></div><div className="grid gap-4 p-5 sm:grid-cols-2"><ReceiptValue label="Transaction reference" value={demoReference}/><ReceiptValue label="Payment amount" value="₹20,000.00"/><ReceiptValue label="Beneficiary" value="Ramesh Kumar Verma"/><ReceiptValue label="Application / tranche" value="APP-DEMO-001 · Stage 1"/><ReceiptValue label="Gateway" value="Mock DBT Gateway"/><ReceiptValue label="Processed at" value={new Date().toLocaleString('en-IN')}/></div><div className="border-t border-emerald-100 bg-emerald-50 px-5 py-3 text-xs font-semibold text-emerald-900">SIMULATED TRANSACTION · This receipt confirms a demo response only. No PFMS or bank transfer occurred.</div></div><div className="flex justify-between gap-2"><Button variant="outline" onClick={()=>setDemoDialog(null)}>Close receipt</Button><Button onClick={()=>setDemoDialog(null)}>Done</Button></div></div>}
       </Modal>
-    </div>
-  )
+    </> : <>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Metric title="Approved applications" value={String(apps.length)} icon={<ShieldCheck/>}/><Metric title="Planned sanctioned" value={formatCurrency(totals.sanctioned)} icon={<CircleDollarSign/>}/><Metric title="Simulated disbursed" value={formatCurrency(totals.disbursed)} icon={<CheckCircle2/>}/>
+      </div>
+      {appsQuery.isLoading ? <div className="flex items-center gap-2 p-8 text-slate-500"><Loader2 className="h-4 w-4 animate-spin"/>Loading approved applications…</div> : appsQuery.isError ? <ErrorCard message="Could not load approved applications from the backend."/> : <Card>
+        <CardHeader><CardTitle>Approved applications</CardTitle><CardDescription>Create a plan, divide the sanctioned amount into stages, and prepare stages after compliance is verified.</CardDescription></CardHeader>
+        <CardContent className="space-y-4">{apps.length === 0 ? <p className="py-6 text-center text-sm text-slate-500">No approved applications are available.</p> : plans.map(({app,plan}) => <ApplicationPlan key={app.id} app={app} plan={plan} busy={busy} inputs={stageInputs[app.id] ?? {name:'',amount:'',date:''}} setInputs={v=>setStageInputs(old=>({...old,[app.id]:v}))} run={perform} refresh={refresh}/>)}</CardContent>
+      </Card>}
+      <Card><CardHeader className="flex flex-row items-center justify-between"><div><CardTitle>Ready stages</CardTitle><CardDescription>Select stages to group into a payment batch.</CardDescription></div><Button size="sm" disabled={!selectedStages.length || !!busy} leftIcon={<Plus className="h-4 w-4"/>} onClick={()=>perform('create-batch',async()=>{const result=await paymentBatchesApi.create(selectedStages);setSelectedStages([]);return result},'Simulated payment batch created')}>Create batch ({selectedStages.length})</Button></CardHeader>
+        <CardContent>{readyStages.length ? <div className="divide-y">{readyStages.map((stage:Stage)=><label key={stage.id} className="flex cursor-pointer items-center gap-3 py-3 text-sm"><input type="checkbox" checked={selectedStages.includes(stage.id)} onChange={e=>setSelectedStages(s=>e.target.checked?[...s,stage.id]:s.filter(x=>x!==stage.id))}/><span className="flex-1">{stage.stageName} · {stage.id.slice(0,8)}</span><strong>{formatCurrency(stage.amount)}</strong></label>)}</div> : <p className="py-5 text-sm text-slate-500">No stages are READY. Plan stages and compliance must be prepared first.</p>}</CardContent></Card>
+      <Card><CardHeader><CardTitle>Payment batches</CardTitle><CardDescription>Batch history and individual simulated transaction references.</CardDescription></CardHeader><CardContent>{batchesQuery.isLoading?<p className="text-sm text-slate-500">Loading batches…</p>:batches.length===0?<p className="py-5 text-sm text-slate-500">No payment batches have been created.</p>:<div className="space-y-3">{batches.map(batch=><BatchCard key={batch.id} batch={batch} busy={busy} run={perform}/>)}</div>}</CardContent></Card>
+    </>}
+  </div>
 }
 
+function Metric({title,value,icon}:{title:string;value:string;icon:React.ReactNode}){return <Card><CardContent className="flex items-center justify-between p-5"><div><p className="text-xs font-semibold uppercase text-slate-500">{title}</p><p className="mt-1 text-xl font-bold text-slate-900">{value}</p></div><span className="text-blue-700">{icon}</span></CardContent></Card>}
+function ErrorCard({message}:{message:string}){return <Card><CardContent className="p-5 text-sm text-rose-700">{message}</CardContent></Card>}
+function DemoValue({label,value}:{label:string;value:string}){return <div className="rounded-lg border border-white/10 bg-white/5 p-3"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</p><p className="mt-1 text-sm font-semibold text-white">{value}</p></div>}
+function DemoStatus({status}:{status:string}){const complete=status==='COMPLETED',working=status==='PROCESSING';return <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${complete?'bg-emerald-100 text-emerald-800':working?'bg-blue-100 text-blue-800':'bg-amber-100 text-amber-800'}`}>{complete?<CheckCircle2 className="h-3.5 w-3.5"/>:working?<Loader2 className="h-3.5 w-3.5 animate-spin"/>:<Clock3 className="h-3.5 w-3.5"/>}{status.replace('_',' ')}</span>}
+function DemoMilestone({label,complete}:{label:string;complete:boolean}){return <div className="flex items-center gap-2"><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${complete?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-400'}`}>{complete?<Check className="h-3.5 w-3.5"/>:<span className="h-1.5 w-1.5 rounded-full bg-current"/>}</span><span className={`text-xs font-medium ${complete?'text-slate-800':'text-slate-400'}`}>{label}</span></div>}
+function ActivityItem({icon,title,detail}:{icon:React.ReactNode;title:string;detail:string}){return <div className="flex items-center gap-3 rounded-lg border border-slate-100 p-3"><span className="text-blue-700">{icon}</span><div><p className="text-sm font-semibold text-slate-800">{title}</p><p className="text-xs text-slate-500">{detail}</p></div></div>}
+function WorkspaceSteps({current}:{current:number}){const steps=['Review','Validate','Process','Receipt'];return <div className="flex items-center">{steps.map((label,i)=>{const n=i+1,done=n<current,active=n===current;return <React.Fragment key={label}><div className="flex min-w-0 flex-col items-center gap-1.5"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${done?'bg-emerald-100 text-emerald-700':active?'bg-blue-700 text-white':'bg-slate-100 text-slate-400'}`}>{done?<Check className="h-4 w-4"/>:n}</span><span className={`text-[10px] font-semibold sm:text-xs ${active?'text-blue-800':done?'text-emerald-800':'text-slate-400'}`}>{label}</span></div>{i<steps.length-1&&<div className={`mx-2 mb-5 h-px flex-1 sm:mx-4 ${done?'bg-emerald-300':'bg-slate-200'}`}/>}</React.Fragment>})}</div>}
+function ReviewTile({label,value,sub}:{label:string;value:string;sub:string}){return <div className="rounded-lg border border-slate-200 p-3.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p><p className="mt-1 text-sm font-bold text-slate-900">{value}</p><p className="mt-0.5 text-xs text-slate-500">{sub}</p></div>}
+function ReceiptValue({label,value}:{label:string;value:string}){return <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p><p className="mt-1 break-all font-mono text-sm font-semibold text-slate-900">{value}</p></div>}
+
+function ApplicationPlan({app,plan,busy,inputs,setInputs,run,refresh}:{app:any;plan?:Plan;busy:string|null;inputs:{name:string;amount:string;date:string};setInputs:(x:{name:string;amount:string;date:string})=>void;run:(key:string,action:()=>Promise<unknown>,success:string)=>Promise<void>;refresh:()=>Promise<void>}){
+ const [expanded,setExpanded]=useState(false)
+ return <div className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold text-slate-900">{app.referenceNumber}</p><p className="text-xs text-slate-500">Application {app.id.slice(0,8)} · sanctioned {formatCurrency(app.requestedAmount)}</p></div>{!plan?<Button size="sm" disabled={!!busy} isLoading={busy===`plan-${app.id}`} onClick={()=>run(`plan-${app.id}`,()=>paymentBatchesApi.createPlan(app.id),'Draft disbursement plan created')}>Create plan</Button>:<div className="flex gap-2"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium">{plan.planStatus}</span><Button size="sm" variant="outline" onClick={()=>setExpanded(v=>!v)}>{expanded?'Hide':'Manage stages'}</Button></div>}</div>
+ {plan&&expanded&&<div className="mt-4 space-y-3">{plan.stages?.map(stage=><div key={stage.id} className="flex flex-wrap items-center gap-3 rounded-md bg-slate-50 p-3 text-sm"><span className="flex-1">{stage.stageName} · {formatCurrency(stage.amount)}</span><span className="text-xs font-semibold">{stage.status}</span>{stage.status==='SCHEDULED'&&plan.planStatus==='ACTIVE'&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>run(`prepare-${stage.id}`,()=>paymentBatchesApi.prepareStage(stage.id),'Compliance passed; stage is READY')}>Prepare</Button>}</div>)}
+ {plan.planStatus==='DRAFT'&&<div className="flex justify-end"><Button size="sm" disabled={!!busy} onClick={()=>run(`activate-${plan.id}`,()=>paymentBatchesApi.activatePlan(plan.id),'Plan activated')}>Activate plan</Button></div>}
+ {plan.planStatus==='DRAFT'&&<form className="grid gap-2 border-t pt-3 sm:grid-cols-4" onSubmit={async e=>{e.preventDefault();await run(`stage-${app.id}`,()=>paymentBatchesApi.addStage(plan.id,(plan.stages?.length??0)+1,inputs.name,Number(inputs.amount),inputs.date||undefined),'Stage added');setInputs({name:'',amount:'',date:''});await refresh()}}><input className="rounded border p-2 text-sm" required placeholder="Stage name" value={inputs.name} onChange={e=>setInputs({...inputs,name:e.target.value})}/><input className="rounded border p-2 text-sm" required type="number" min="0.01" step="0.01" placeholder="Amount ₹" value={inputs.amount} onChange={e=>setInputs({...inputs,amount:e.target.value})}/><input className="rounded border p-2 text-sm" type="date" value={inputs.date} onChange={e=>setInputs({...inputs,date:e.target.value})}/><Button size="sm" disabled={!!busy} isLoading={busy===`stage-${app.id}`} leftIcon={<Plus className="h-4 w-4"/>}>Add stage</Button></form>}
+ <p className="text-xs text-slate-500">Plan total must match the approved amount. Stage preparation is blocked until mandatory compliance is complete.</p></div>}
+ </div>
+}
+
+function BatchCard({batch,busy,run}:{batch:PaymentBatch;busy:string|null;run:(key:string,action:()=>Promise<unknown>,success:string)=>Promise<void>}){return <div className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-center gap-3"><div className="min-w-0 flex-1"><p className="font-mono text-sm font-semibold">{batch.batchReference}</p><p className="text-xs text-slate-500">{batch.paymentCount} payments · {formatCurrency(batch.totalAmount)} · {batch.status} · {formatDateTime(batch.createdAt)}</p></div>{batch.status==='DRAFT'&&<Button size="sm" variant="outline" disabled={!!busy} isLoading={busy===`validate-${batch.id}`} leftIcon={<ClipboardCheck className="h-4 w-4"/>} onClick={()=>run(`validate-${batch.id}`,()=>paymentBatchesApi.validate(batch.id),'Batch validated')}>Validate</Button>}{batch.status==='VALIDATED'&&<Button size="sm" disabled={!!busy} isLoading={busy===`process-${batch.id}`} leftIcon={<Send className="h-4 w-4"/>} onClick={()=>run(`process-${batch.id}`,()=>paymentBatchesApi.process(batch.id),'Simulated payment processing completed')}>Process simulated payments</Button>}</div>
+ <div className="mt-3 space-y-2">{batch.payments.map(p=><div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-100 pt-2 text-xs"><span className="font-medium">{p.status}</span><span>{formatCurrency(p.amount)}</span><span>Stage {p.stageId.slice(0,8)}</span>{p.transactionReference&&<span className="font-mono text-emerald-700">SIMULATED · {p.transactionReference}</span>}{p.status==='FAILED'&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>run(`retry-${p.id}`,()=>paymentBatchesApi.retry(p.id),'Failed payment queued for retry')}>Retry payment</Button>}{p.gatewayMessage&&<span className="basis-full text-slate-500">{p.gatewayMessage}</span>}</div>)}</div>
+ </div>}

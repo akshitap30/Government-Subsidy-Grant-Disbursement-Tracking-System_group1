@@ -18,7 +18,6 @@ public class DisbursementController {
 
     private final DisbursementService disbursementService;
 
-    // ================= PLAN ENDPOINTS =================
 
     @PostMapping("/disbursement-plans")
     public ResponseEntity<ApiResponse<DisbursementPlanResponse>> createPlan(
@@ -67,7 +66,6 @@ public class DisbursementController {
         return ResponseEntity.ok(ApiResponse.success("Disbursement plan cancelled", response));
     }
 
-    // ================= STAGE ENDPOINTS =================
 
     @PostMapping("/disbursement-plans/{planId}/stages")
     public ResponseEntity<ApiResponse<DisbursementStageResponse>> addStage(
